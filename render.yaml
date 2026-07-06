@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: super-kippah-bros
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: "python3 super_kippah_multiplayer_server.py"

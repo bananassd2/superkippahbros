@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#66c7ff"/>
+  <rect x="64" y="336" width="384" height="112" fill="#9b5f2c"/>
+  <rect x="64" y="320" width="384" height="40" fill="#2fbf57"/>
+  <rect x="176" y="120" width="160" height="200" fill="#111"/>
+  <rect x="192" y="136" width="128" height="112" fill="#f2c19b"/>
+  <rect x="184" y="104" width="144" height="44" fill="#111"/>
+  <rect x="204" y="86" width="104" height="28" fill="#111"/>
+  <rect x="206" y="176" width="22" height="22" fill="#182033"/>
+  <rect x="284" y="176" width="22" height="22" fill="#182033"/>
+  <rect x="204" y="248" width="104" height="72" fill="#d94b42"/>
+  <rect x="214" y="296" width="28" height="72" fill="#151515"/>
+  <rect x="270" y="296" width="28" height="72" fill="#151515"/>
+  <rect x="158" y="198" width="20" height="96" fill="#2b1c17"/>
+  <rect x="334" y="198" width="20" height="96" fill="#2b1c17"/>
+  <text x="256" y="430" text-anchor="middle" font-family="Arial, sans-serif" font-size="54" font-weight="900" fill="#ffd74a">SKB</text>
+</svg>

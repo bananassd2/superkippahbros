@@ -1,0 +1,19 @@
+{
+  "name": "Super Kippah Bros",
+  "short_name": "Kippah Bros",
+  "description": "Mobile Super Kippah Bros game.",
+  "start_url": "./super_kippah_bros_phone.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#66c7ff",
+  "theme_color": "#66c7ff",
+  "icons": [
+    {
+      "src": "./super_kippah_icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
