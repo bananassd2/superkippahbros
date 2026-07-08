@@ -9,10 +9,18 @@
   <meta name="theme-color" content="#66c7ff">
   <meta name="application-name" content="Super Kippah Bros">
   <meta name="apple-mobile-web-app-title" content="Super Kippah Bros">
+  <meta name="description" content="Play Super Kippah Bros, a colorful mobile platform game with coins, skins, abilities, touch controls, clouds, levels, and classic pixel-style action.">
+  <meta name="robots" content="index, follow">
+  <meta property="og:title" content="Super Kippah Bros">
+  <meta property="og:description" content="A colorful mobile platform game with coins, skins, abilities, touch controls, and pixel-style levels.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://bananassd2.github.io/superkippahbros/super_kippah_bros_phone.html">
+  <link rel="canonical" href="https://bananassd2.github.io/superkippahbros/super_kippah_bros_phone.html">
   <link rel="manifest" href="super_kippah_manifest.webmanifest">
   <link rel="icon" href="super_kippah_icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="super_kippah_icon.svg">
-  <title>Super Kippah Bros Phone</title>
+  <title>Super Kippah Bros - Mobile Game</title>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     html, body {
       margin: 0;
@@ -107,7 +115,7 @@
     const ctx = canvas.getContext("2d");
     if ("serviceWorker" in navigator) {
       addEventListener("load", () => {
-        navigator.serviceWorker.register("./super_kippah_sw.js").catch(() => {});
+        navigator.serviceWorker.register("./super_kippah_sw.js?v=one-real-render-room-v3").catch(() => {});
       });
     }
     const W = 960;
@@ -224,6 +232,8 @@
     function openBuilder() {
       state.screen = "builder";
       state.builderCamera = 0;
+      if (state.builderTool === "enemy") state.builderTool = "turtle";
+      state.multiplayerAiPeers = [];
       clearInputState();
     }
 
@@ -289,9 +299,11 @@
       chatActive: false,
       chatDraft: "",
       chatMessages: [],
+      chatScroll: 0,
       lastChat: "",
       lastChatTime: 0,
       pendingChat: "",
+      sponsorHidden: false,
       builderUnlocked: !!save.builderUnlocked,
       builderTool: "brick",
       builderCamera: 0,
@@ -322,14 +334,24 @@
 
     let multiplayerSocket = null;
     let multiplayerLastSend = 0;
+    let multiplayerPeer = null;
+    let multiplayerPeerHost = false;
+    let multiplayerPeerConns = [];
+    const GLOBAL_MULTIPLAYER_URL = "wss://superkippahbros.onrender.com";
+    const PEER_ROOM_ID = "super-kippah-bros-main-room-613";
     const CPU_PLAYER_NAMES = ["Ari", "Noam", "Lev", "Maya", "Eli", "Tali"];
     const CPU_PLAYER_COLORS = ["#ff7abf", "#ffd74a", "#7cffb2", "#a897ff", "#ffad7a", "#74f7ff"];
 
     function multiplayerUrl() {
       if (!location.hostname) return "ws://10.0.0.12:8765";
+      if (location.protocol === "https:") return GLOBAL_MULTIPLAYER_URL;
       const proto = location.protocol === "https:" ? "wss://" : "ws://";
       if (location.port === "8000") return proto + location.hostname + ":8765";
       return proto + location.host;
+    }
+
+    function needsExternalMultiplayerServer() {
+      return false;
     }
 
     function toggleMultiplayer() {
@@ -341,6 +363,10 @@
     }
 
     function connectMultiplayer() {
+      if (needsExternalMultiplayerServer()) {
+        connectPeerMultiplayer();
+        return;
+      }
       if (multiplayerSocket && multiplayerSocket.readyState <= 1) return;
       state.multiplayerStatus = "CONNECTING";
       try {
@@ -349,6 +375,15 @@
         state.multiplayerStatus = "FAILED";
         return;
       }
+      const socket = multiplayerSocket;
+      setTimeout(() => {
+        if (socket === multiplayerSocket && socket.readyState !== WebSocket.OPEN) {
+          state.multiplayer = false;
+          state.multiplayerStatus = needsExternalMultiplayerServer() ? "SERVER NEEDED" : "SERVER OFF";
+          state.multiplayerPeers = {};
+          try { socket.close(); } catch {}
+        }
+      }, 3500);
       multiplayerSocket.addEventListener("open", () => {
         state.multiplayer = true;
         state.multiplayerStatus = "ONLINE";
@@ -362,21 +397,7 @@
       multiplayerSocket.addEventListener("message", event => {
         let data;
         try { data = JSON.parse(event.data); } catch { return; }
-        if (data.type === "hello") {
-          state.multiplayerId = data.id;
-          return;
-        }
-        if (data.type === "leave") {
-          delete state.multiplayerPeers[data.id];
-          return;
-        }
-        if (data.type === "chat" && data.id !== state.multiplayerId) {
-          receiveChatMessage(data);
-          return;
-        }
-        if (data.type === "state" && data.id !== state.multiplayerId) {
-          state.multiplayerPeers[data.id] = data;
-        }
+        handleMultiplayerPacket(data);
       });
       multiplayerSocket.addEventListener("close", () => {
         state.multiplayer = false;
@@ -389,16 +410,163 @@
       });
     }
 
+    function connectPeerMultiplayer() {
+      if (multiplayerPeer && !multiplayerPeer.destroyed) return;
+      if (!window.Peer) {
+        state.multiplayerStatus = "LOAD FAILED";
+        msg("Refresh and try connect");
+        return;
+      }
+      state.multiplayerStatus = "CONNECTING";
+      state.multiplayerPeers = {};
+      multiplayerPeerConns = [];
+      multiplayerPeerHost = false;
+
+      const becomeClient = () => {
+        try {
+          multiplayerPeer = new Peer();
+        } catch {
+          state.multiplayerStatus = "FAILED";
+          return;
+        }
+        multiplayerPeer.on("open", id => {
+          state.multiplayerId = id;
+          const conn = multiplayerPeer.connect(PEER_ROOM_ID, { reliable: true });
+          setupPeerConnection(conn);
+          setTimeout(() => {
+            if (!state.multiplayer && state.multiplayerStatus === "CONNECTING") {
+              state.multiplayerStatus = "NO ROOM";
+              msg("Have one player connect first");
+            }
+          }, 4500);
+        });
+        multiplayerPeer.on("error", () => {
+          if (!state.multiplayer) state.multiplayerStatus = "PEER OFF";
+        });
+      };
+
+      try {
+        multiplayerPeer = new Peer(PEER_ROOM_ID);
+      } catch {
+        becomeClient();
+        return;
+      }
+      multiplayerPeer.on("open", id => {
+        multiplayerPeerHost = true;
+        state.multiplayer = true;
+        state.multiplayerId = id;
+        state.multiplayerStatus = "HOST ONLINE";
+        sendMultiplayerState(true);
+        if (state.pendingChat) {
+          const pending = state.pendingChat;
+          state.pendingChat = "";
+          sendChatMessage(pending, false);
+        }
+      });
+      multiplayerPeer.on("connection", setupPeerConnection);
+      multiplayerPeer.on("error", err => {
+        if (String(err && err.type) === "unavailable-id") {
+          try { multiplayerPeer.destroy(); } catch {}
+          multiplayerPeer = null;
+          becomeClient();
+        } else if (!state.multiplayer) {
+          state.multiplayerStatus = "PEER OFF";
+        }
+      });
+    }
+
+    function setupPeerConnection(conn) {
+      if (!conn) return;
+      if (!multiplayerPeerConns.includes(conn)) multiplayerPeerConns.push(conn);
+      conn.on("open", () => {
+        state.multiplayer = true;
+        state.multiplayerStatus = multiplayerPeerHost ? "HOST ONLINE" : "ONLINE";
+        sendMultiplayerState(true);
+        if (state.pendingChat) {
+          const pending = state.pendingChat;
+          state.pendingChat = "";
+          sendChatMessage(pending, false);
+        }
+      });
+      conn.on("data", data => {
+        if (typeof data === "string") {
+          try { data = JSON.parse(data); } catch { return; }
+        }
+        if (!data || typeof data !== "object") return;
+        if (!data.id) data.id = conn.peer;
+        if (multiplayerPeerHost) broadcastPeerPacket(data, conn);
+        handleMultiplayerPacket(data);
+      });
+      conn.on("close", () => {
+        multiplayerPeerConns = multiplayerPeerConns.filter(c => c !== conn);
+        delete state.multiplayerPeers[conn.peer];
+      });
+      conn.on("error", () => {
+        multiplayerPeerConns = multiplayerPeerConns.filter(c => c !== conn);
+        delete state.multiplayerPeers[conn.peer];
+      });
+    }
+
+    function broadcastPeerPacket(data, skip = null) {
+      for (const conn of multiplayerPeerConns) {
+        if (conn === skip || !conn.open) continue;
+        try { conn.send(data); } catch {}
+      }
+    }
+
+    function sendMultiplayerPacket(data) {
+      data.id = state.multiplayerId || data.id || "player";
+      data.time = Date.now() / 1000;
+      if (multiplayerSocket && multiplayerSocket.readyState === WebSocket.OPEN) {
+        multiplayerSocket.send(JSON.stringify(data));
+        return true;
+      }
+      if (multiplayerPeer && !multiplayerPeer.destroyed && state.multiplayer) {
+        if (multiplayerPeerHost) broadcastPeerPacket(data);
+        else {
+          const conn = multiplayerPeerConns.find(c => c.open);
+          if (conn) conn.send(data);
+        }
+        return true;
+      }
+      return false;
+    }
+
+    function handleMultiplayerPacket(data) {
+      if (data.type === "hello") {
+        state.multiplayerId = data.id;
+        return;
+      }
+      if (!data.id || data.id === state.multiplayerId) return;
+      if (data.type === "leave") {
+        delete state.multiplayerPeers[data.id];
+        return;
+      }
+      if (data.type === "chat") {
+        receiveChatMessage(data);
+        return;
+      }
+      if (data.type === "state") {
+        state.multiplayerPeers[data.id] = data;
+      }
+    }
+
     function disconnectMultiplayer() {
       if (multiplayerSocket) multiplayerSocket.close();
       multiplayerSocket = null;
+      if (multiplayerPeer) {
+        try { multiplayerPeer.destroy(); } catch {}
+      }
+      multiplayerPeer = null;
+      multiplayerPeerHost = false;
+      multiplayerPeerConns = [];
       state.multiplayer = false;
       state.multiplayerStatus = "OFF";
       state.multiplayerPeers = {};
     }
 
     function ensureAiMultiplayerPeers() {
-      const target = state.multiplayer ? 5 : 3;
+      const target = 0;
       while (state.multiplayerAiPeers.length < target) {
         const index = state.multiplayerAiPeers.length;
         state.multiplayerAiPeers.push({
@@ -599,6 +767,7 @@
 
     function updateAiMultiplayerPeers() {
       ensureAiMultiplayerPeers();
+      if (!state.multiplayerAiPeers.length) return;
       for (const bot of state.multiplayerAiPeers) {
         bot.screen = state.screen;
         bot.level = state.level;
@@ -671,10 +840,10 @@
     }
 
     function sendMultiplayerState(force = false) {
-      if (!state.multiplayer || !multiplayerSocket || multiplayerSocket.readyState !== WebSocket.OPEN) return;
+      if (!state.multiplayer) return;
       if (!force && state.time - multiplayerLastSend < 6) return;
       multiplayerLastSend = state.time;
-      multiplayerSocket.send(JSON.stringify({
+      sendMultiplayerPacket({
         type: "state",
         name: state.multiplayerName,
         color: state.multiplayerColor,
@@ -688,15 +857,14 @@
         screen: state.screen,
         score: player.score,
         skin: state.skin,
-      }));
+      });
     }
 
     function receiveChatMessage(data) {
       const text = String(data.text || "").replace(/[<>]/g, "").trim().slice(0, 64);
       if (!text) return;
       const name = String(data.name || "Player").replace(/[^a-zA-Z0-9 ]/g, "").trim().slice(0, 12) || "Player";
-      state.chatMessages.push({ name, text, time: state.time, color: data.color || "#74f7ff" });
-      if (state.chatMessages.length > 5) state.chatMessages.shift();
+      addChatMessage({ name, text, time: state.time, color: data.color || "#74f7ff" });
       if (state.multiplayerPeers[data.id]) {
         state.multiplayerPeers[data.id].chat = text;
         state.multiplayerPeers[data.id].chatTime = state.time;
@@ -707,20 +875,19 @@
       const clean = String(text || "").replace(/[<>]/g, "").trim().slice(0, 64);
       if (!clean) return;
       if (echo) {
-        state.chatMessages.push({ name: state.multiplayerName, text: clean, time: state.time, color: state.multiplayerColor });
-        if (state.chatMessages.length > 5) state.chatMessages.shift();
+        addChatMessage({ name: state.multiplayerName, text: clean, time: state.time, color: state.multiplayerColor });
         state.lastChat = clean;
         state.lastChatTime = state.time;
       }
-      if (state.multiplayer && multiplayerSocket && multiplayerSocket.readyState === WebSocket.OPEN) {
-        multiplayerSocket.send(JSON.stringify({
+      if (state.multiplayer) {
+        sendMultiplayerPacket({
           type: "chat",
           name: state.multiplayerName,
           color: state.multiplayerColor,
           text: clean,
           level: state.level,
           screen: state.screen,
-        }));
+        });
       } else {
         state.pendingChat = clean;
         if (!multiplayerSocket || multiplayerSocket.readyState > 1) connectMultiplayer();
@@ -728,11 +895,32 @@
       }
     }
 
+    function addChatMessage(message) {
+      const wasAtBottom = state.chatScroll === 0;
+      state.chatMessages.push(message);
+      if (state.chatMessages.length > 30) state.chatMessages.shift();
+      if (wasAtBottom) state.chatScroll = 0;
+      else state.chatScroll = Math.min(maxChatScroll(), state.chatScroll + 1);
+    }
+
+    function maxChatScroll() {
+      return Math.max(0, state.chatMessages.length - 2);
+    }
+
+    function scrollChat(dir) {
+      state.chatScroll = clamp(0, maxChatScroll(), state.chatScroll + dir);
+    }
+
     function cleanupMultiplayerPeers() {
       const now = Date.now() / 1000;
       for (const id of Object.keys(state.multiplayerPeers)) {
         if (now - (state.multiplayerPeers[id].time || 0) > 8) delete state.multiplayerPeers[id];
       }
+    }
+
+    function realOnlineCount() {
+      cleanupMultiplayerPeers();
+      return state.multiplayer ? Object.keys(state.multiplayerPeers).length + 1 : 0;
     }
 
     function walletText() {
@@ -856,7 +1044,7 @@
     }
 
     function checkCode(value) {
-      state.codeText = value.toLowerCase().replace(/[^a-z]/g, "").slice(-8);
+      state.codeText = value.toLowerCase().replace(/[^a-z0-9]/g, "").slice(-8);
       codeInput.value = state.codeText;
       if (state.codeText.endsWith("idle")) {
         state.infinity = true;
@@ -866,7 +1054,7 @@
         closeTextInput();
         msg("Infinite coins!");
         saveGame();
-      } else if (state.codeText.endsWith("bk")) {
+      } else if (state.codeText.endsWith("613")) {
         state.builderUnlocked = true;
         state.codeText = "";
         codeInput.value = "";
@@ -1163,6 +1351,19 @@
           if ((it.dir || 0) === 1) e.vx = Math.abs(e.vx);
           if ((it.dir || 0) === 2) e.vx = -Math.abs(e.vx);
           level.enemies.push(e);
+        } else if (it.type === "turtle") {
+          const e = makeEnemy(x + 4, y + 8, "turtle");
+          if ((it.dir || 0) === 1) e.vx = Math.abs(e.vx);
+          if ((it.dir || 0) === 2) e.vx = -Math.abs(e.vx);
+          level.enemies.push(e);
+        } else if (it.type === "torah") {
+          level.flowers.push(makeFlower(x + 2, y - 18));
+        } else if (it.type === "cloudrider") {
+          const e = makeEnemy(x + 2, y - 28, "cloudrider");
+          if ((it.dir || 0) === 1) e.vx = Math.abs(e.vx);
+          if ((it.dir || 0) === 2) e.vx = -Math.abs(e.vx);
+          e.baseY = e.y;
+          level.enemies.push(e);
         } else if (it.type === "pipe") {
           if ((it.dir || 0) % 2 === 1) level.pipes.push({ x, y: level.groundY - TILE, w: 116, h: TILE });
           else level.pipes.push({ x, y: level.groundY - 2 * TILE, w: 76, h: 2 * TILE });
@@ -1254,7 +1455,11 @@
         for (let x = c[0] + 40; x < c[0] + c[2] - 30; x += 70) {
           level.coins.push({ x, y: c[1] - 42, got: false });
         }
-        level.enemies.push(makeEnemy(c[0] + c[2] / 2, c[1] - 34, "cloud"));
+        if (state.level >= 3 && c[2] >= 120 && ((c[0] / TILE + variant) % 2 === 0)) {
+          level.enemies.push(makeEnemy(c[0] + c[2] / 2 - 18, c[1] - 70, "cloudrider"));
+        } else {
+          level.enemies.push(makeEnemy(c[0] + c[2] / 2, c[1] - 34, "cloud"));
+        }
       }
       for (const [row, xs] of cfg.coins) {
         for (const tx of xs) level.coins.push({ x: tx * TILE + 20, y: row * TILE + 20, got: false });
@@ -1277,8 +1482,10 @@
     }
 
     function makeEnemy(x, y, kind) {
-      const speed = kind === "ninja" ? 1.65 : kind === "stone" ? 1.25 : kind === "cloud" ? 1.2 : kind === "turtle" ? 0.85 : 1.1;
-      return { x, y, w: kind === "turtle" ? 32 : 30, h: kind === "turtle" ? 30 : 30, vx: Math.random() < 0.5 ? -speed : speed, vy: 0, alive: true, kind, grounded: false, patrol: 45 + Math.random() * 70, shell: false, shellTimer: 0, shellKickCooldown: 0 };
+      const speed = kind === "ninja" ? 1.65 : kind === "stone" ? 1.25 : kind === "cloud" ? 1.2 : kind === "turtle" ? 0.85 : kind === "cloudrider" ? 0.8 : kind === "spike" ? 0.95 : 1.1;
+      const w = kind === "turtle" ? 32 : kind === "cloudrider" ? 36 : kind === "spike" ? 28 : 30;
+      const h = kind === "turtle" ? 30 : kind === "cloudrider" ? 42 : kind === "spike" ? 28 : 30;
+      return { x, y, w, h, vx: Math.random() < 0.5 ? -speed : speed, vy: 0, alive: true, kind, grounded: false, patrol: 45 + Math.random() * 70, shell: false, shellTimer: 0, shellKickCooldown: 0, dropTimer: 100 + Math.random() * 80, baseY: y };
     }
 
     function makeFlower(x, y) {
@@ -2423,9 +2630,14 @@
     canvas.addEventListener("touchcancel", touchUp, { passive: false });
     canvas.addEventListener("contextmenu", e => e.preventDefault());
     canvas.addEventListener("wheel", e => {
+      const p = { x: (e.clientX - offsetX) / scale, y: (e.clientY - offsetY) / scale };
+      if (state.screen === "play" && pointInRect(p.x, p.y, chatRect())) {
+        e.preventDefault();
+        scrollChat(e.deltaY < 0 ? 1 : -1);
+        return;
+      }
       if (state.screen !== "menu") return;
       e.preventDefault();
-      const p = { x: (e.clientX - offsetX) / scale, y: (e.clientY - offsetY) / scale };
       const dir = e.deltaY > 0 ? 1 : -1;
       if (p.x < W / 2 && p.y > 250) {
         state.skinScroll = clamp(0, Math.max(0, skins.length - 4), state.skinScroll + dir);
@@ -2603,6 +2815,11 @@
         submitChat();
         return;
       }
+      if (state.screen === "play" && pointInRect(x, y, chatScrollRect())) {
+        const r = chatScrollRect();
+        scrollChat(y < r.y + r.h / 2 ? 1 : -1);
+        return;
+      }
       if (state.screen === "play" && pointInRect(x, y, chatRect())) {
         activateChatBox();
         return;
@@ -2678,12 +2895,17 @@
     }
 
     function chatRect() {
-      return { x: 18, y: 92, w: 218, h: 88 };
+      return { x: 18, y: 146, w: 176, h: 70 };
     }
 
     function chatSendRect() {
       const r = chatRect();
-      return { x: r.x + r.w - 58, y: r.y + r.h - 25, w: 48, h: 18 };
+      return { x: r.x + r.w - 48, y: r.y + r.h - 22, w: 38, h: 16 };
+    }
+
+    function chatScrollRect() {
+      const r = chatRect();
+      return { x: r.x + r.w - 15, y: r.y + 27, w: 10, h: Math.max(18, r.h - 54) };
     }
 
     function abilitySearchRect() {
@@ -3287,6 +3509,35 @@
           continue;
         }
         if (e.x < state.camera - 120 || e.x > state.camera + W + 120) continue;
+        if (e.kind === "cloudrider") {
+          e.x += e.vx;
+          e.y = e.baseY + Math.sin(state.time / 26 + e.x * 0.02) * 7;
+          e.patrol--;
+          if (e.patrol <= 0 || e.x < 120 || e.x > level.flagX - 160) {
+            e.vx *= -1;
+            e.patrol = 80 + Math.random() * 70;
+          }
+          e.dropTimer--;
+          if (e.dropTimer <= 0) {
+            const dropped = makeEnemy(e.x + e.w / 2 - 14, e.y + e.h + 12, "spike");
+            dropped.vx = e.vx * 0.35;
+            dropped.vy = 1.5;
+            level.enemies.push(dropped);
+            addBurst(dropped.x + 14, dropped.y, "#9aa7c4", 12);
+            e.dropTimer = 150 + Math.random() * 120;
+          }
+          if (rects(player, e)) {
+            if (state.starTime > 0) {
+              e.alive = false;
+              player.score += 450;
+              addBurst(e.x + e.w / 2, e.y, "#fff3a8", 26);
+            } else {
+              hurtPlayer();
+              player.vy = -6;
+            }
+          }
+          continue;
+        }
         if (e.kind === "turtle" && e.shell && Math.abs(e.vx) < 0.1) {
           e.shellTimer--;
           if (e.shellTimer <= 0) {
@@ -3351,7 +3602,11 @@
             continue;
           }
           if (player.vy > 2 && player.y + player.h - 8 < e.y + 10) {
-            if (e.kind === "turtle") {
+            if (e.kind === "spike") {
+              hurtPlayer();
+              player.vy = -7;
+              addBurst(e.x + e.w / 2, e.y, "#ff4f67", 16);
+            } else if (e.kind === "turtle") {
               if (!e.shell) {
                 e.shell = true;
                 e.shellTimer = 520;
@@ -4117,6 +4372,26 @@
         draw3DTurtle(p.x + 15, p.y + (enemy && enemy.shell ? 25 : 32), 0.78);
         return;
       }
+      if (kind === "cloudrider") {
+        drawCloudPlatform(p.x - 12, p.y + 24, 58, 18);
+        drawIsoBox(p.x + 16, p.y + 30, 26, 26, 6, "#8d7b66", "#5f4d3f", "#2b211b");
+        drawRect(p.x + 8, p.y + 7, 5, 5, "#111");
+        drawRect(p.x + 20, p.y + 7, 5, 5, "#111");
+        drawRect(p.x + 10, p.y + 20, 13, 3, "#201510");
+        drawRect(p.x + 1, p.y - 6, 32, 8, "#3b2b22");
+        drawRect(p.x + 5, p.y - 12, 24, 7, "#57402f");
+        return;
+      }
+      if (kind === "spike") {
+        draw3DShadow(p.x + 14, p.y + 31, 18, 5, 0.22);
+        drawIsoBox(p.x + 14, p.y + 28, 27, 22, 6, "#9ca3af", "#5f6b7a", "#202936");
+        drawRect(p.x + 4, p.y - 2, 5, 9, "#d9edff");
+        drawRect(p.x + 13, p.y - 7, 5, 12, "#d9edff");
+        drawRect(p.x + 22, p.y - 2, 5, 9, "#d9edff");
+        drawRect(p.x + 8, p.y + 11, 4, 4, "#111");
+        drawRect(p.x + 20, p.y + 11, 4, 4, "#111");
+        return;
+      }
       const body = kind === "cloud" ? "#8b7a64" : kind === "stone" ? "#a15e2b" : "#705642";
       const dark = kind === "cloud" ? "#4f463d" : "#3a2112";
       draw3DShadow(p.x + 15, p.y + 34, 18, 5, 0.2);
@@ -4162,7 +4437,6 @@
       cleanupMultiplayerPeers();
       const peers = [
         ...(state.multiplayer ? Object.values(state.multiplayerPeers) : []),
-        ...state.multiplayerAiPeers,
       ];
       for (const peer of peers) {
         if (peer.screen !== "play" || peer.level !== state.level) continue;
@@ -4173,7 +4447,7 @@
         const skin = skins[Number.isFinite(peer.skin) ? peer.skin % skins.length : state.skin] || skins[0];
         drawCharacter3DSide(p.x, p.y, !!peer.powered, !!peer.crouching, peer.facing || 1, skin, peer.ai ? 0.94 : 0.76);
         const color = peer.color || skin.shirt || "#74f7ff";
-        const label = (peer.name || "Player").slice(0, 10) + (peer.ai ? " cpu" : "");
+        const label = (peer.name || "Player").slice(0, 10) + (peer.ai ? " bot" : "");
         drawText(label, p.x + 15, p.y - 10, peer.ai ? 8 : 9, color, "center", "#182033");
         if (!peer.ai && peer.chat && state.time - (peer.chatTime || 0) < 360) drawSmallChatBubble(peer.chat, p.x + 15, p.y - 34, color);
       }
@@ -4190,7 +4464,6 @@
       cleanupMultiplayerPeers();
       const peers = [
         ...(state.multiplayer ? Object.values(state.multiplayerPeers) : []),
-        ...state.multiplayerAiPeers,
       ];
       for (const peer of peers) {
         if (peer.screen !== "play" || peer.level !== state.level) continue;
@@ -4242,7 +4515,7 @@
       drawRect(x + 5, footY, 10, 5, "#ffffff");
       drawRect(x + 15, footY, 10, 5, "#ffffff");
       ctx.globalAlpha = 1;
-      const label = (peer.name || "Player").slice(0, 10) + (peer.ai ? " cpu" : "");
+      const label = (peer.name || "Player").slice(0, 10) + (peer.ai ? " bot" : "");
       drawText(label, x + 15, y - 10, peer.ai ? 8 : 9, color, "center", "#182033");
       if (!peer.ai && peer.chat && state.time - (peer.chatTime || 0) < 360) {
         drawSmallChatBubble(peer.chat, x + 15, y - 34, color);
@@ -4275,22 +4548,33 @@
       ctx.globalAlpha = 1;
       drawText("CHAT", r.x + 16, r.y + 18, 10, "#182033");
       drawText(state.multiplayer ? "online" : "connect", r.x + r.w - 14, r.y + 18, 9, state.multiplayer ? "#2870c9" : "#6f7f8f", "right");
-      const recent = state.chatMessages.slice(-3);
+      const visibleCount = 2;
+      const maxScroll = maxChatScroll();
+      state.chatScroll = clamp(0, maxScroll, state.chatScroll);
+      const end = state.chatMessages.length - state.chatScroll;
+      const recent = state.chatMessages.slice(Math.max(0, end - visibleCount), end);
       if (!recent.length) {
-        drawText("tap to type", r.x + 16, r.y + 42, 10, "#6f7f8f");
+        drawText("tap to type", r.x + 14, r.y + 38, 9, "#6f7f8f");
       } else {
         recent.forEach((m, i) => {
-          const y = r.y + 38 + i * 16;
+          const y = r.y + 36 + i * 14;
           drawRect(r.x + 12, y - 9, 5, 10, m.color || "#74f7ff");
-          drawText((m.name || "P").slice(0, 7) + ": " + String(m.text || "").slice(0, 20), r.x + 22, y, 9, "#182033");
+          drawText((m.name || "P").slice(0, 6) + ": " + String(m.text || "").slice(0, 14), r.x + 22, y, 8, "#182033");
         });
       }
-      drawPanel(r.x + 10, r.y + r.h - 25, r.w - 72, 18, state.chatActive ? "#fff3a8" : "#ffffff");
-      const draftText = state.chatDraft ? state.chatDraft.slice(0, 22) : "typing...";
-      drawText(state.chatActive ? draftText : "tap chat or press C", r.x + 18, r.y + r.h - 12, 8, state.chatDraft ? "#182033" : "#6f7f8f");
+      if (maxScroll > 0) {
+        const sr = chatScrollRect();
+        drawPanel(sr.x, sr.y, sr.w, sr.h, "rgba(255,255,255,0.58)");
+        const thumbH = Math.max(10, sr.h * visibleCount / state.chatMessages.length);
+        const thumbY = sr.y + (sr.h - thumbH) * (1 - state.chatScroll / maxScroll);
+        drawPanel(sr.x + 2, thumbY, sr.w - 4, thumbH, "#8fbaff");
+      }
+      drawPanel(r.x + 9, r.y + r.h - 22, r.w - 61, 16, state.chatActive ? "#fff3a8" : "#ffffff");
+      const draftText = state.chatDraft ? state.chatDraft.slice(0, 15) : "typing...";
+      drawText(state.chatActive ? draftText : "tap chat", r.x + 16, r.y + r.h - 10, 7, state.chatDraft ? "#182033" : "#6f7f8f");
       const send = chatSendRect();
       drawPanel(send.x, send.y, send.w, send.h, "#bff7d2");
-      drawText("SEND", send.x + send.w / 2, send.y + 12, 8, "#182033", "center");
+      drawText("SEND", send.x + send.w / 2, send.y + 11, 7, "#182033", "center");
       ctx.restore();
     }
 
@@ -4384,6 +4668,7 @@
     }
 
     function sponsorRects() {
+      if (state.sponsorHidden) return [];
       const w = viewportW < 760 ? 54 : 62;
       const h = Math.min(220, Math.max(164, viewportH * 0.38));
       const leftX = Math.max(8, offsetX > 70 ? 12 : 8);
@@ -4392,7 +4677,16 @@
       return [{ x: leftX, y, w, h }, { x: rightX, y, w, h }];
     }
 
+    function sponsorCloseRects() {
+      return sponsorRects().map(r => ({ x: r.x + r.w - 20, y: r.y - 10, w: 24, h: 24 }));
+    }
+
     function handleSponsorPress(clientX, clientY) {
+      const closeHit = sponsorCloseRects().some(r => clientX >= r.x && clientX <= r.x + r.w && clientY >= r.y && clientY <= r.y + r.h);
+      if (closeHit) {
+        state.sponsorHidden = true;
+        return true;
+      }
       const hit = sponsorRects().some(r => clientX >= r.x && clientX <= r.x + r.w && clientY >= r.y && clientY <= r.y + r.h);
       if (!hit) return false;
       window.open(SPONSOR_URL, "_blank", "noopener,noreferrer");
@@ -4426,6 +4720,14 @@
       ctx.fillStyle = "#64748b";
       ctx.fillText("sponsor", 8, 17);
       ctx.restore();
+      ctx.restore();
+
+      const closeX = x + w - 20;
+      const closeY = y - 10;
+      ctx.save();
+      ctx.globalAlpha = 0.98;
+      drawPanel(closeX, closeY, 24, 24, "#ffffff");
+      drawText("X", closeX + 12, closeY + 16, 12, "#182033", "center");
       ctx.restore();
     }
 
@@ -4637,6 +4939,31 @@
         } else {
           drawRect(x + 4, y + 22, 24, 4, "#12361f");
         }
+        return;
+      }
+      if (kind === "cloudrider") {
+        drawCloudPlatform(x - 10, y + 25, 58, 18);
+        drawRect(x + 1, y + 7, 34, 31, "#201510");
+        drawRect(x + 4, y + 4, 28, 7, "#3b2b22");
+        drawRect(x + 6, y + 11, 24, 19, "#6b5848");
+        drawRect(x + 8, y + 9, 18, 5, "#a68d74");
+        drawRect(x + 9, y + 15, 5, 5, "#111");
+        drawRect(x + 22, y + 15, 5, 5, "#111");
+        drawRect(x + 12, y + 26, 12, 3, "#241814");
+        drawRect(x + 4, y - 3, 28, 8, "#2b1a13");
+        drawRect(x + 9, y - 9, 18, 7, "#4d3426");
+        return;
+      }
+      if (kind === "spike") {
+        drawRect(x + 1, y + 8, 26, 22, "#202936");
+        drawRect(x + 4, y + 5, 20, 22, "#64748b");
+        drawRect(x + 5, y + 1, 5, 8, "#d9edff");
+        drawRect(x + 12, y - 5, 5, 13, "#d9edff");
+        drawRect(x + 20, y + 1, 5, 8, "#d9edff");
+        drawRect(x + 8, y + 14, 4, 4, "#111");
+        drawRect(x + 18, y + 14, 4, 4, "#111");
+        drawRect(x + 8, y + 27, 8, 4, "#151515");
+        drawRect(x + 17, y + 27, 8, 4, "#151515");
         return;
       }
       const body = kind === "cloud" ? "#8b7a64" : "#705642";
@@ -5031,14 +5358,14 @@
     function drawMultiplayerPanel() {
       drawPanel(720, 66, 210, 178, "#d9edff");
       drawText("MULTIPLAYER", 825, 91, 15, "#182033", "center");
-      drawText("Room " + state.multiplayerStatus, 825, 112, 11, state.multiplayer ? "#2870c9" : "#6f7f8f", "center");
+      const statusSize = state.multiplayerStatus === "SERVER NEEDED" ? 9 : 11;
+      drawText("Room " + state.multiplayerStatus, 825, 112, statusSize, state.multiplayer ? "#2870c9" : "#6f7f8f", "center");
       button(734, 124, 182, 32, state.multiplayer ? "DISCONNECT" : "CONNECT", toggleMultiplayer, state.multiplayer ? "#ffad7a" : "#bff7d2", 11);
       button(734, 162, 88, 32, "NAME", chooseMultiplayerName, "#fff3a8", 11);
       button(828, 162, 88, 32, "COLOR", cycleMultiplayerColor, state.multiplayerColor, 11);
       drawText(state.multiplayerName, 804, 211, 11, "#182033", "center");
       drawRect(738, 204, 22, 10, state.multiplayerColor);
-      ensureAiMultiplayerPeers();
-      drawText((Object.keys(state.multiplayerPeers).length + state.multiplayerAiPeers.length) + " online", 878, 211, 9, "#2870c9", "center");
+      drawText(realOnlineCount() + " online", 878, 211, 9, "#2870c9", "center");
     }
 
     function drawBuilder() {
@@ -5063,6 +5390,9 @@
       if (it.type === "brick" || it.type === "question") drawBlock(x, y, { x, y, w: TILE, h: TILE, type: it.type, used: false });
       else if (it.type === "coin") drawCoin(x + 20, y + 20);
       else if (it.type === "enemy") drawEnemy(x + 5, y + 6, "ground");
+      else if (it.type === "turtle") drawEnemy(x + 4, y + 8, "turtle");
+      else if (it.type === "torah") drawFlower(x + 2, y - 18, { alive: true, health: 2, flash: 0, phase: 0 });
+      else if (it.type === "cloudrider") drawEnemy(x + 2, y - 28, "cloudrider");
       else if (it.type === "pipe") {
         if ((it.dir || 0) % 2 === 1) drawPipe(x, level.groundY - TILE, 116, TILE);
         else drawPipe(x, level.groundY - 2 * TILE, 76, 2 * TILE);
@@ -5078,10 +5408,10 @@
 
     function drawBuilderPalette() {
       drawPanel(18, H - 82, W - 36, 68, "#d9edff");
-      const tools = ["brick", "question", "coin", "enemy", "pipe", "cloud", "turn", "erase"];
+      const tools = ["brick", "question", "coin", "turtle", "torah", "cloud", "cloudrider", "pipe", "turn", "erase"];
       tools.forEach((tool, i) => {
-        const x = 30 + i * 68;
-        button(x, H - 66, 60, 42, builderToolName(tool), () => { state.builderTool = tool; }, tool === state.builderTool ? "#fff3a8" : "#ffffff", 8);
+        const x = 26 + i * 58;
+        button(x, H - 66, 52, 42, builderToolName(tool), () => { state.builderTool = tool; }, tool === state.builderTool ? "#fff3a8" : "#ffffff", 7);
       });
       button(W - 284, H - 66, 74, 42, "CLEAR", clearBuilderLevel, "#ffad7a", 9);
       button(W - 202, H - 66, 74, 42, "LEFT", () => { state.builderCamera = Math.max(0, state.builderCamera - TILE * 4); }, "#ffb9df", 9);
@@ -5089,7 +5419,7 @@
     }
 
     function builderToolName(tool) {
-      const names = { brick: "BRICK", question: "?", coin: "COIN", enemy: "BOT", pipe: "PIPE", cloud: "CLOUD", turn: "TURN", erase: "ERASE" };
+      const names = { brick: "BRICK", question: "?", coin: "COIN", enemy: "BOT", turtle: "TURT", torah: "TORAH", cloudrider: "RIDER", pipe: "PIPE", cloud: "CLOUD", turn: "TURN", erase: "ERASE" };
       return names[tool] || tool.toUpperCase();
     }
 
