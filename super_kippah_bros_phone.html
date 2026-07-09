@@ -7,11 +7,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#66c7ff">
-  <meta name="application-name" content="Super Kippah Bros">
-  <meta name="apple-mobile-web-app-title" content="Super Kippah Bros">
-  <meta name="description" content="Play Super Kippah Bros, a colorful mobile platform game with coins, skins, abilities, touch controls, clouds, levels, and classic pixel-style action.">
+  <meta name="application-name" content="The Jewish Bros">
+  <meta name="apple-mobile-web-app-title" content="The Jewish Bros">
+  <meta name="description" content="Play The Jewish Bros, a colorful mobile platform game with coins, skins, abilities, touch controls, clouds, levels, and classic pixel-style action.">
   <meta name="robots" content="index, follow">
-  <meta property="og:title" content="Super Kippah Bros">
+  <meta property="og:title" content="The Jewish Bros">
   <meta property="og:description" content="A colorful mobile platform game with coins, skins, abilities, touch controls, and pixel-style levels.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://bananassd2.github.io/superkippahbros/super_kippah_bros_phone.html">
@@ -19,7 +19,7 @@
   <link rel="manifest" href="super_kippah_manifest.webmanifest">
   <link rel="icon" href="super_kippah_icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="super_kippah_icon.svg">
-  <title>Super Kippah Bros - Mobile Game</title>
+  <title>The Jewish Bros - Mobile Game</title>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     html, body {
@@ -1268,6 +1268,7 @@
       powered: false,
       airJumps: 1,
       jumpWasDown: false,
+      fireWasDown: false,
       shootCooldown: 0,
       flipTime: 0,
       crouching: false,
@@ -1324,6 +1325,7 @@
       player.invuln = 0;
       player.airJumps = 1;
       player.jumpWasDown = false;
+      player.fireWasDown = false;
       player.shootCooldown = 0;
       player.flipTime = 0;
       player.crouching = false;
@@ -2582,7 +2584,7 @@
         const p = toWorld(t);
         rememberTouch(t.identifier, p);
         beginMenuScrollDrag(t.identifier, p);
-        if ((state.screen === "play" || state.screen === "runner3d") && pointInRect(p.x, p.y, joystickZone()) && !pointInRect(p.x, p.y, jumpRect()) && !pointInRect(p.x, p.y, powerRect()) && !joystick.active) {
+        if ((state.screen === "play" || state.screen === "runner3d") && pointInRect(p.x, p.y, joystickZone()) && !pointInRect(p.x, p.y, jumpRect()) && !pointInRect(p.x, p.y, powerRect()) && !pointInRect(p.x, p.y, fireRect()) && !pointInRect(p.x, p.y, crouchRect()) && !joystick.active) {
           joystick.active = true;
           joystick.id = t.identifier;
           joystick.baseX = p.x;
@@ -2654,7 +2656,7 @@
       const p = { x: (e.clientX - offsetX) / scale, y: (e.clientY - offsetY) / scale };
       rememberTouch(e.pointerId, p);
       beginMenuScrollDrag(e.pointerId, p);
-      if ((state.screen === "play" || state.screen === "runner3d") && pointInRect(p.x, p.y, joystickZone()) && !pointInRect(p.x, p.y, jumpRect()) && !pointInRect(p.x, p.y, powerRect()) && !joystick.active) {
+      if ((state.screen === "play" || state.screen === "runner3d") && pointInRect(p.x, p.y, joystickZone()) && !pointInRect(p.x, p.y, jumpRect()) && !pointInRect(p.x, p.y, powerRect()) && !pointInRect(p.x, p.y, fireRect()) && !pointInRect(p.x, p.y, crouchRect()) && !joystick.active) {
         joystick.active = true;
         joystick.id = e.pointerId;
         joystick.baseX = p.x;
@@ -2696,7 +2698,7 @@
       if (handleSponsorPress(e.clientX, e.clientY)) return;
       const p = { x: (e.clientX - offsetX) / scale, y: (e.clientY - offsetY) / scale };
       rememberTouch("mouse", p);
-      if ((state.screen === "play" || state.screen === "runner3d") && pointInRect(p.x, p.y, joystickZone()) && !pointInRect(p.x, p.y, jumpRect()) && !pointInRect(p.x, p.y, powerRect())) {
+      if ((state.screen === "play" || state.screen === "runner3d") && pointInRect(p.x, p.y, joystickZone()) && !pointInRect(p.x, p.y, jumpRect()) && !pointInRect(p.x, p.y, powerRect()) && !pointInRect(p.x, p.y, fireRect()) && !pointInRect(p.x, p.y, crouchRect())) {
         joystick.active = true;
         joystick.id = "mouse";
         joystick.baseX = p.x;
@@ -2794,7 +2796,8 @@
         return;
       }
       keys[e.key] = true;
-      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " ", "Enter"].includes(e.key)) e.preventDefault();
+      if (e.code) keys[e.code] = true;
+      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " ", "Enter", "Shift"].includes(e.key)) e.preventDefault();
       if (state.screen === "menu" && (e.key === "Enter" || e.key === "w" || e.key === "W" || e.key === "ArrowUp")) {
         startGame();
       } else if ((state.screen === "play" || state.screen === "runner3d" || state.screen === "finished") && (e.key === "r" || e.key === "R")) {
@@ -2807,7 +2810,8 @@
     });
     addEventListener("keyup", e => {
       keys[e.key] = false;
-      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " ", "Enter"].includes(e.key)) e.preventDefault();
+      if (e.code) keys[e.code] = false;
+      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " ", "Enter", "Shift"].includes(e.key)) e.preventDefault();
     });
 
     function pressAt(x, y) {
@@ -3031,7 +3035,7 @@
       controls.down = keys.s || keys.S || keys.ArrowDown;
       controls.jump = controls.up || keys.e || keys.E || keys[" "];
       controls.ability = keys.Enter;
-      controls.fire = keys.Shift || keys.ShiftLeft || keys.ShiftRight;
+      controls.fire = keys.Shift || keys.ShiftLeft || keys.ShiftRight || keys["Left Shift"] || keys["Right Shift"];
       if (joystick.active) {
         const dx = joystick.knobX - joystick.baseX;
         const dy = joystick.knobY - joystick.baseY;
@@ -3255,6 +3259,8 @@
         addBurst(player.x + player.w / 2, player.y + player.h, "#ffad3d", 2);
       }
       player.jumpWasDown = jumpDown;
+      const firePressed = controls.fire && !player.fireWasDown;
+      player.fireWasDown = controls.fire;
       if (player.grounded) player.fuel = Math.min(100, player.fuel + 1.8);
       if (player.grounded) player.airJumps = 1;
       setCrouch(controls.down && player.grounded);
@@ -3264,7 +3270,7 @@
         controls.ability = false;
         useAbility();
       }
-      if (controls.fire) shootLetter();
+      if (firePressed) shootLetter();
       if (player.cooldown > 0) player.cooldown--;
       if (player.invuln > 0) player.invuln--;
       if (player.shootCooldown > 0) player.shootCooldown--;
@@ -3769,6 +3775,7 @@
       player.h = 36;
       player.airJumps = 1;
       player.jumpWasDown = false;
+      player.fireWasDown = false;
       player.shootCooldown = 0;
       player.invuln = 120;
       player.fuel = 100;
@@ -4606,7 +4613,7 @@
       for (let x = 0; x < W; x += TILE) drawBlock(x, 508, { x, y: 508, w: TILE, h: 60, type: "ground" });
       for (const p of state.particles) drawRect(p.x, p.y, 6, 6, p.color);
       state.buttons = [];
-      drawText("SUPER KIPPAH BROS", W / 2, 170, 34, "#ffd74a", "center", "#182033");
+      drawText("THE JEWISH BROS", W / 2, 170, 34, "#ffd74a", "center", "#182033");
       drawText("YOU FINISHED EVERY LEVEL!", W / 2, 230, 20, "#182033", "center", "#fff3a8");
       button(310, 286, 340, 58, "PLAY AGAIN", () => { state.screen = "play"; state.level = 0; state.inBonus = false; resetLevel(); }, "#ffad7a", 19);
       drawText("Best " + state.best + "   Wallet " + walletText(), W / 2, 378, 16, "#182033", "center", "#d9edff");
@@ -5288,7 +5295,7 @@
       drawPlayer(76, 428);
       drawEnemy(825, 456, "ground");
       drawPipe(690, 410, 78, 78);
-      drawText("SUPER KIPPAH", W / 2, 64, 32, "#ffd74a", "center");
+      drawText("THE JEWISH", W / 2, 64, 32, "#ffd74a", "center");
       drawText("BROS", W / 2, 101, 32, "#ffd74a", "center");
       state.buttons = [];
       button(292, 126, 376, 54, "START GAME", startGame, "#ffad7a", 20);
